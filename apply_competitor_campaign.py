@@ -21,13 +21,30 @@ def digest(rows):
     return hashlib.sha256(json.dumps([dict(r) for r in rows],sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
+def known_texts(db):
+    """Return current and historically scheduled texts so replacements stay genuinely new."""
+    texts={r['text'] for r in db.execute('SELECT text FROM jobs') if r['text']}
+    has_revisions=db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='campaign_revisions'").fetchone()
+    if not has_revisions:
+        return texts
+    for row in db.execute('SELECT previous_queue,plan_json FROM campaign_revisions'):
+        for field in row:
+            try:
+                payload=json.loads(field)
+            except (TypeError,json.JSONDecodeError):
+                continue
+            entries=payload if isinstance(payload,list) else payload.get('posts',[])
+            texts.update(item.get('text') for item in entries if isinstance(item,dict) and item.get('text'))
+    return texts
+
+
 def prepare(db, current):
     rows=[dict(r) for r in db.execute('SELECT * FROM jobs ORDER BY id')]
     future=[r for r in rows if r['state']=='pending' and datetime.fromisoformat(r['due'])>=current+timedelta(minutes=10)]
     future.sort(key=lambda r:r['due'])
     if not future: raise ValueError('No future reservations')
     if any(r['state']=='processing' for r in rows): raise ValueError('Publishing is in progress')
-    generated=build_posts(len(future),exclude_texts=[r['text'] for r in rows])
+    generated=build_posts(len(future),exclude_texts=known_texts(db))
     return {'phase':'competitor-v3-'+current.strftime('%Y%m%dT%H%M%SZ'),
             'created_at':current.isoformat(),'account':s.EXPECTED_USER,
             'queue_digest':digest(rows),'source':'research/competitor_features_2026-09-26.json',
@@ -96,7 +113,7 @@ def prepare_topup(db, current, total_hours=168):
         raise ValueError('Queue already covers the requested hourly horizon')
     need=total_hours-len(pending)
     last_due=datetime.fromisoformat(pending[-1]['due'])
-    generated=build_posts(need,exclude_texts=[r['text'] for r in rows])
+    generated=build_posts(need,exclude_texts=known_texts(db))
     phase='competitor-v3-topup-'+current.strftime('%Y%m%dT%H%M%SZ')
     posts=[]
     for i,post in enumerate(generated,1):

@@ -36,6 +36,7 @@ class ApplyTests(unittest.TestCase):
         self.assertEqual(self.db.execute('SELECT due FROM jobs WHERE id=4').fetchone()[0],plan['posts'][0]['due'])
         self.assertTrue((Path(backup)/'schedule.sqlite3').exists())
         self.assertEqual(len(json.loads(self.db.execute('SELECT previous_queue FROM campaign_revisions').fetchone()[0])),5)
+        self.assertIn('old4',a.known_texts(self.db))
 
     def test_changed_queue_refuses_to_overwrite(self):
         plan=a.prepare(self.db,self.now)
